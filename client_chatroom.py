@@ -38,7 +38,7 @@ class ClientChatroom:
         self.channel.start_consuming()
 
     def callback(self, ch, method, properties, body):
-        print('received message %s' % body)
+        print('\n          %s\n' % body)
         return
 
 

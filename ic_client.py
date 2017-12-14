@@ -1,5 +1,3 @@
-import logging
-import os
 import pika
 from argparse import ArgumentParser
 import ic_protocol
@@ -12,7 +10,7 @@ from client_chatroom import ClientChatroom
 
 class Client(object):
 
-    def __init__(self):
+    def __init__(self, args):
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=args.saddr))
         self.channel = self.connection.channel()
         result = self.channel.queue_declare(exclusive=True)
@@ -31,10 +29,14 @@ class Client(object):
                     name = raw_input('Enter a username: ')
                     if re.match(r'[a-zA-Z0-9]{3,}', name):
                         self.username = name
-                        self.message_process('r %s' % name)
+                        password = raw_input('Enter a password: ')
+                        if re.match(r'[a-zA-Z0-9]{3,}', password):
+                            self.message_process('r %s' % name + ic_protocol._MESSAGE_SEP + password)
                     else:
-                        print('Invalid username. Username may contain only numbers and letters. '
+                        print('Invalid . May contain only numbers and letters. '
                               'Must be at least 3 characters long')
+
+
                 else:
                     message = raw_input('Enter a command followed by optional message: ')
                     self.message_process(message)
@@ -62,15 +64,30 @@ class Client(object):
             # m:CHATROOM:MESSAGE
             if user_input_1 not in self.chatrooms:
                 print('Must join chatroom first before you can send messages')
+                body = None
             else:
                 body = ic_protocol._MESSAGE + ic_protocol._MESSAGE_SEP + \
-                       user_input_1 + ic_protocol._MESSAGE_SEP + user_input_2
+                       user_input_1 + ic_protocol._MESSAGE_SEP + ' '.join(split_message[2:])
         elif action == 'g':
             body = ic_protocol._GET_CHATROOMS
         elif action == 'j':
             body = ic_protocol._JOIN_ROOM + ic_protocol._MESSAGE_SEP + user_input_1
-        elif action == 'u':
+        elif action == 'uo':
             body = ic_protocol._USERS
+        elif action == 'u':
+            body = ic_protocol._USERS_SPECIFIC_CHAT + ic_protocol._MESSAGE_SEP + user_input_1
+        elif action == 'i':
+            # i:CURRENTCHAT:INVITECHAT
+            body = ic_protocol._INVITE + ic_protocol._MESSAGE_SEP + \
+                   user_input_1 + ic_protocol._MESSAGE_SEP + \
+                   user_input_2
+        elif action == 'pj':
+            #join private
+            # pj:CHATROOM:KEY
+            body = ic_protocol._JOIN_ON_INVITE + ic_protocol._MESSAGE_SEP + \
+                   user_input_1 + ic_protocol._MESSAGE_SEP + user_input_2
+        elif action == 'l':
+            body = ic_protocol._LEAVE_ROOM + ic_protocol._MESSAGE_SEP + user_input_1
         elif action == ic_protocol._DISCONNECT:
             body = ic_protocol._DISCONNECT
         else:
@@ -103,6 +120,8 @@ class Client(object):
             print('Message sent!')
         elif ic_protocol.server_process(rsp) == ic_protocol._USERS:
             self.list_subjects(rsp, u=True)
+        elif ic_protocol.server_process(rsp) == ic_protocol._USERS_SPECIFIC_CHAT:
+            self.list_subjects(rsp, u=True)
         else:
             print('NO ADEQUATE ACTION FOUND. THE RESPONSE WAS %s' % rsp)
             print('SERVER PROCESS: %s' % ic_protocol.server_process(rsp))
@@ -119,6 +138,7 @@ class Client(object):
         print('Available users:' if u else 'Available Chatrooms:')
         for n in subjects:
             print(n)
+
 
     def on_response(self, ch, method, props, body):
         if self.corr_id == props.correlation_id:
@@ -150,4 +170,4 @@ if __name__ == "__main__":
     parser.add_argument('-a', '--saddr', help="Address of the host. Default localhost.", default='127.0.0.1')
     parser.add_argument('-p', '--port', help="Listen on port.", default=5672, type=int)
     args = parser.parse_args()
-    Client()
+    Client(args)

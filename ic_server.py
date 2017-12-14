@@ -4,7 +4,6 @@ import pika
 import ic_protocol
 from argparse import ArgumentParser
 from server_chatroom import ServerChatroom
-import threading
 
 
 
@@ -44,13 +43,14 @@ class Server:
 
         if ic_protocol.server_process(body) == ic_protocol._REGISTER:
             username = body.split(ic_protocol._MESSAGE_SEP)[1]
-            if username not in self.usernames:
-                self.usernames.append(username)
+            password = body.split(ic_protocol._MESSAGE_SEP)[2]
+            if username not in [user[0] for user in self.usernames]:
+                self.usernames.append((username, password))
                 self.online_users.append(username)
                 print('Successfully registered user %s' % username)
                 respond(ic_protocol._ACK)
             else:
-                print('Username %s taken' % username)
+                print('Username %s taken\n' % username)
                 respond(ic_protocol._UNAME_TAKEN)
         elif (ic_protocol.server_process(body) == ic_protocol._CREATE_CHATROOM or
                       ic_protocol.server_process(body) == ic_protocol._CREATE_PRIVATE_CHATROOM):
@@ -74,7 +74,7 @@ class Server:
             message = inf[3]
             try:
                 index = self.get_chatroom(chatroom_name)
-                self.chatrooms[index].publish_message(message)
+                self.chatrooms[index].publish_message('{0}: {1}'.format(inf[1],message))
                 respond(ic_protocol._ACK + ic_protocol._MESSAGE_SEP + ic_protocol._MESSAGE)
             except:
                 respond(ic_protocol._CHATROOM_NON_EXISTANT)
@@ -89,15 +89,63 @@ class Server:
             try:
                 index = self.get_chatroom(chatroom_name)
                 self.chatrooms[index].add_user(inf[1])
-                self.chatrooms[index].publish_message('User %s joined this chat' % inf[1])
+                self.chatrooms[index].publish_message('User %s joined this chat\n' % inf[1])
                 respond(ic_protocol._ACK + ic_protocol._MESSAGE_SEP + \
                         ic_protocol._JOIN_ROOM + ic_protocol._MESSAGE_SEP + \
                         chatroom_name)
             except:
                 respond(ic_protocol._CHATROOM_NON_EXISTANT)
 
+        elif ic_protocol.server_process(body) == ic_protocol._INVITE:
+            inf = body.split(ic_protocol._MESSAGE_SEP)
+            try:
+                # i:USER:CURRENTCHAT:INVITECHAT
+                index_invited_chat = self.get_chatroom(inf[3])
+                name = self.chatrooms[index_invited_chat].name
+                key = self.chatrooms[index_invited_chat].key
+                index_current_room = self.get_chatroom(inf[2])
+                self.chatrooms[index_current_room].publish_message(
+                    'You have received an invitation to the private chatroom {0}.'
+                    ' To join this chatroom enter \"j {1} {2}\".\n If you are already '
+                    'in this chatroom then ignore this message\n'.format(name, name, key))
+                respond(ic_protocol._ACK)
+            except Exception as e:
+                respond(ic_protocol._INV)
+
         elif ic_protocol.server_process(body) == ic_protocol._USERS:
-            respond(ic_protocol._USERS + ic_protocol._MESSAGE_SEP + ','.join([user for user in self.usernames]))
+            respond(ic_protocol._USERS + ic_protocol._MESSAGE_SEP + ','.join([user[0] for user in self.usernames]))
+
+        elif ic_protocol.server_process(body) == ic_protocol._JOIN_ON_INVITE:
+            inf = body.split(ic_protocol._MESSAGE_SEP)
+            chatroom_name = inf[1]
+            key = inf[2]
+            try:
+                index = self.get_chatroom(chatroom_name)
+                if self.chatrooms[index].key == key:
+                    self.chatrooms[index].add_user(inf[1])
+                    self.chatrooms[index].publish_message('User %s joined this chat\n' % inf[1])
+                    respond(ic_protocol._ACK + ic_protocol._MESSAGE_SEP + \
+                            ic_protocol._JOIN_ROOM + ic_protocol._MESSAGE_SEP + \
+                            chatroom_name)
+            except:
+                respond(ic_protocol._CHATROOM_NON_EXISTANT)
+
+        elif ic_protocol.server_process(body) == ic_protocol._LEAVE_ROOM:
+            inf = body.split(ic_protocol._MESSAGE_SEP)
+            for chatroom in self.chatrooms:
+                if inf[1] in chatroom.users:
+                    chatroom.users.remove(inf[1])
+                    chatroom.publish_message('User {0} has left the chatroom {1}\n'.format(inf[1], chatroom.name))
+            respond(ic_protocol._ACK)
+
+        elif ic_protocol.server_process(body) == ic_protocol._USERS_SPECIFIC_CHAT:
+            inf = body.split(ic_protocol._MESSAGE_SEP)
+            try:
+                index = self.get_chatroom(inf[2])
+                respond(ic_protocol._USERS_SPECIFIC_CHAT + ic_protocol._MESSAGE_SEP + \
+                        ','.join([user for user in self.chatrooms[index]]))
+            except:
+                respond(ic_protocol._INV)
 
         elif ic_protocol.server_process(body) == ic_protocol._DISCONNECT:
             inf = body.split(ic_protocol._MESSAGE_SEP)
@@ -105,8 +153,9 @@ class Server:
             for chatroom in self.chatrooms:
                 if inf[1] in chatroom.users:
                     chatroom.users.remove(inf[1])
-                    chatroom.publish_message('User %s has left the chat' % inf[1])
+                    chatroom.publish_message('User {0} has left the chatroom {1}\n'.format(inf[1], chatroom.name))
             respond(ic_protocol._ACK)
+
 
 
     def get_chatroom(self, chatroom_name):
