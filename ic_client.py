@@ -6,6 +6,7 @@ import ic_protocol
 import time
 import uuid
 import threading
+import re
 from client_chatroom import ClientChatroom
 
 
@@ -18,6 +19,7 @@ class Client(object):
         self.callback_queue = result.method.queue
         self.channel.basic_consume(self.on_response, no_ack=True, queue=self.callback_queue)
         self.chatrooms = []
+        self.username = None
         self.main()
 
 
@@ -25,9 +27,19 @@ class Client(object):
         while True:
             time.sleep(1)
             try:
-                message = raw_input('enter a command followed by optional message: ')
-                self.message_process(message)
+                if self.username is None:
+                    name = raw_input('Enter a username: ')
+                    if re.match(r'[a-zA-Z0-9]{3,}', name):
+                        self.username = name
+                        self.message_process('r %s' % name)
+                    else:
+                        print('Invalid username. Username may contain only numbers and letters. '
+                              'Must be at least 3 characters long')
+                else:
+                    message = raw_input('Enter a command followed by optional message: ')
+                    self.message_process(message)
             except KeyboardInterrupt:
+                self.message_process(ic_protocol._DISCONNECT)
                 self.channel.close()
                 self.connection.close()
                 break
@@ -35,55 +47,78 @@ class Client(object):
 
     def message_process(self, message):
         split_message = message.split()
-        print 'in message process'
-        if split_message[0] == 'r':
-            body = ic_protocol._REGISTER + ic_protocol._MESSAGE_SEP + split_message[1]
-        elif split_message[0] == 'c':
-            body = ic_protocol._CREATE_CHATROOM + ic_protocol._MESSAGE_SEP + split_message[1]
-        elif split_message[0] == 'm':
+        action = split_message[0]
+        if len(split_message) > 1:
+            user_input_1 = split_message[1]
+            if len(split_message) > 2:
+                user_input_2 = split_message[2]
+        if action == 'r':
+            body = ic_protocol._REGISTER + ic_protocol._MESSAGE_SEP + user_input_1
+        elif action == 'c':
+            body = ic_protocol._CREATE_CHATROOM + ic_protocol._MESSAGE_SEP + user_input_1
+        elif action == 'pc': #private chatroom
+            body = ic_protocol._CREATE_PRIVATE_CHATROOM + ic_protocol._MESSAGE_SEP + user_input_1
+        elif action == 'm':
             # m:CHATROOM:MESSAGE
-            body = ic_protocol._MESSAGE + ic_protocol._MESSAGE_SEP + \
-                   split_message[1] + ic_protocol._MESSAGE_SEP + \
-                   split_message[2]
-        elif split_message[0] == 'g':
+            if user_input_1 not in self.chatrooms:
+                print('Must join chatroom first before you can send messages')
+            else:
+                body = ic_protocol._MESSAGE + ic_protocol._MESSAGE_SEP + \
+                       user_input_1 + ic_protocol._MESSAGE_SEP + user_input_2
+        elif action == 'g':
             body = ic_protocol._GET_CHATROOMS
-        elif split_message[0] == 'j':
-            body = ic_protocol._JOIN_ROOM + ic_protocol._MESSAGE_SEP + split_message[1]
+        elif action == 'j':
+            body = ic_protocol._JOIN_ROOM + ic_protocol._MESSAGE_SEP + user_input_1
+        elif action == 'u':
+            body = ic_protocol._USERS
+        elif action == ic_protocol._DISCONNECT:
+            body = ic_protocol._DISCONNECT
         else:
-            body = ''
-        print 'body %s' % body
-        self.response = None
-        self.corr_id = str(uuid.uuid4())
-        rsp = self.call(body)
-        self.responce_process(rsp)
+            body = None
+
+
+        if body is not None:
+            print("body from client handler: %s" % body)
+            self.response = None
+            self.corr_id = str(uuid.uuid4())
+            body = body.split(ic_protocol._MESSAGE_SEP)
+            body = ic_protocol._MESSAGE_SEP.join([body[0], self.username] + body[1:])
+            rsp = self.call(body)
+            self.responce_process(rsp)
+        else:
+            print('invalid input')
 
     def responce_process(self, rsp):
         if ic_protocol.server_process(rsp) == ic_protocol._CREATE_CHATROOM:
-            split_rsp = rsp.split(ic_protocol._MESSAGE_SEP)
-            c_thread = threading.Thread(target=self.chatroom_thread, args=(split_rsp[2],))
-            c_thread.daemon = True
-            c_thread.start()
-            self.chatrooms.append(c_thread)
-            print('Opened chatroom %s' % split_rsp[2])
+            self.create_thread(rsp.split(ic_protocol._MESSAGE_SEP)[2])
         elif ic_protocol.server_process(rsp) == ic_protocol._GET_CHATROOMS:
-            chatrooms = rsp.split(ic_protocol._MESSAGE_SEP)[1].split(',')
-            print('Available Chatrooms:')
-            for n in chatrooms:
-                print(n)
+            self.list_subjects(rsp)
         elif ic_protocol.server_process(rsp) == ic_protocol._UNAME_TAKEN:
             print('Username already taken, choose another')
         elif ic_protocol.server_process(rsp) == ic_protocol._JOIN_ROOM:
-            chat_thread = threading.Thread(target=self.chatroom_thread, args=(rsp.split(ic_protocol._MESSAGE_SEP)[2],))
-            chat_thread.daemon = True
-            chat_thread.start()
-            print('Joined room')
+            self.create_thread(rsp.split(ic_protocol._MESSAGE_SEP)[2])
         elif ic_protocol.server_process(rsp) == ic_protocol._CHATROOM_NON_EXISTANT:
             print('Chatroom nonexistant')
         elif ic_protocol.server_process(rsp) == ic_protocol._MESSAGE:
             print('Message sent!')
+        elif ic_protocol.server_process(rsp) == ic_protocol._USERS:
+            self.list_subjects(rsp, u=True)
         else:
             print('NO ADEQUATE ACTION FOUND. THE RESPONSE WAS %s' % rsp)
             print('SERVER PROCESS: %s' % ic_protocol.server_process(rsp))
+
+    def create_thread(self, thread_name):
+        new_thread = threading.Thread(target=self.chatroom_thread, args=(thread_name,))
+        new_thread.daemon = True
+        new_thread.start()
+        print('In chat %s' %thread_name)
+        self.chatrooms.append(thread_name)
+
+    def list_subjects(self, rsp, u=False):
+        subjects = rsp.split(ic_protocol._MESSAGE_SEP)[1].split(',')
+        print('Available users:' if u else 'Available Chatrooms:')
+        for n in subjects:
+            print(n)
 
     def on_response(self, ch, method, props, body):
         if self.corr_id == props.correlation_id:

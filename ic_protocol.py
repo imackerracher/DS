@@ -1,3 +1,5 @@
+import random
+
 _ACK = 'ACK'
 _DISCONNECT = 'DIS'
 _LISTEN = 'LISTEN'
@@ -8,6 +10,8 @@ _MESSAGE = '3'
 _CHATROOM_NON_EXISTANT = '4'
 _GET_CHATROOMS = '5'
 _JOIN_ROOM = '6'
+_USERS = '7'
+_CREATE_PRIVATE_CHATROOM = '8'
 
 
 _MESSAGE_SEP = ':'
@@ -28,12 +32,18 @@ def server_process(message):
         return _UNAME_TAKEN
     elif message.startswith(_CREATE_CHATROOM + _MESSAGE_SEP):
         return _CREATE_CHATROOM
+    elif message.startswith(_CREATE_PRIVATE_CHATROOM + _MESSAGE_SEP):
+        return _CREATE_PRIVATE_CHATROOM
     elif message.startswith(_MESSAGE + _MESSAGE_SEP):
         return _MESSAGE
     elif message.startswith(_GET_CHATROOMS):
         return _GET_CHATROOMS
     elif message.startswith(_JOIN_ROOM + _MESSAGE_SEP):
         return _JOIN_ROOM
+    elif message.startswith(_USERS):
+        return _USERS
+    elif message.startswith(_DISCONNECT):
+        return _DISCONNECT
 
     else:
-        return 'NADA, NIET, NICHTS, NOTHING, RIEN'
+        return random.choice('NADA', 'NIET', 'NICHTS', 'NOTHING', 'RIEN')
